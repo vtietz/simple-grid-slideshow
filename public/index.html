@@ -74,6 +74,29 @@
       opacity: 1;
     }
 
+    .panel .loading-indicator {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+      opacity: 0;
+      z-index: 10;
+      transition: opacity 0.2s ease-in-out;
+    }
+
+    .panel .loading-indicator.active {
+      opacity: 1;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     #loading {
       position: fixed;
       top: 50%;
@@ -204,6 +227,11 @@
     let settings = {};
     let mediaFiles = [];
     let panels = [];
+    
+    // Global tracking for unique image display
+    let currentlyDisplayed = new Set(); // Images currently shown in any panel
+    let globalUsedMedia = new Set();    // All images shown in current cycle
+    let availableQueue = [];            // Shuffled queue of available images
     
     const MONTH_NAMES = {
       en: [
@@ -340,16 +368,26 @@
 
       const totalPanels = settings.gridColumns * settings.gridRows;
 
-      // Shuffle media files for initial distribution
-      const shuffled = [...mediaFiles].sort(() => Math.random() - 0.5);
+      // Initialize the available queue with shuffled media
+      availableQueue = [...mediaFiles].sort(() => Math.random() - 0.5);
+      currentlyDisplayed.clear();
+      globalUsedMedia.clear();
 
       for (let i = 0; i < totalPanels; i++) {
         const panel = createPanel(i);
         container.appendChild(panel.element);
         panels.push(panel);
 
-        // Set initial media (use modulo to handle case where we have fewer files than panels)
-        const initialMedia = shuffled[i % shuffled.length];
+        // Get unique initial media from the queue
+        let initialMedia;
+        if (availableQueue.length > 0) {
+          initialMedia = availableQueue.shift();
+        } else {
+          // More panels than images - reset queue but allow temporary duplicates for init
+          availableQueue = [...mediaFiles].sort(() => Math.random() - 0.5);
+          initialMedia = availableQueue.shift();
+        }
+        
         showMedia(panel, initialMedia);
 
         // Start random timer for this panel
@@ -376,36 +414,75 @@
       const dateOverlay2 = document.createElement('div');
       dateOverlay2.className = 'date-overlay';
 
+      // Create loading indicator
+      const loadingIndicator = document.createElement('div');
+      loadingIndicator.className = 'loading-indicator';
+
       element.appendChild(wrapper1);
       element.appendChild(wrapper2);
       element.appendChild(dateOverlay1);
       element.appendChild(dateOverlay2);
+      element.appendChild(loadingIndicator);
 
       return {
         element,
         wrappers: [wrapper1, wrapper2],
         dateOverlays: [dateOverlay1, dateOverlay2],
+        loadingIndicator,
         activeIndex: 0,
         currentMedia: null,
-        usedMedia: new Set()
+        preloadedMedia: null,
+        preloadedElement: null
       };
     }
 
-    function getRandomMedia(panel) {
-      // If we've used all media, reset the used set
-      if (panel.usedMedia.size >= mediaFiles.length) {
-        panel.usedMedia.clear();
-      }
-
-      // Get unused media
-      const unused = mediaFiles.filter(m => !panel.usedMedia.has(m.path) && m !== panel.currentMedia);
+    // Initialize or reset the available queue with shuffled unused media
+    function resetAvailableQueue() {
+      // Get all media that hasn't been used in this cycle
+      const unused = mediaFiles.filter(m => !globalUsedMedia.has(m.path));
       
       if (unused.length === 0) {
-        // Fallback: just pick random
-        return mediaFiles[Math.floor(Math.random() * mediaFiles.length)];
+        // All media has been shown, start a new cycle
+        globalUsedMedia.clear();
+        availableQueue = [...mediaFiles].sort(() => Math.random() - 0.5);
+      } else {
+        availableQueue = unused.sort(() => Math.random() - 0.5);
+      }
+    }
+
+    function getRandomMedia(panel) {
+      // Remove current panel's media from currently displayed (it's about to change)
+      if (panel.currentMedia) {
+        currentlyDisplayed.delete(panel.currentMedia.path);
       }
 
-      return unused[Math.floor(Math.random() * unused.length)];
+      // Filter out media currently shown in other panels
+      let available = availableQueue.filter(m => !currentlyDisplayed.has(m.path));
+      
+      // If queue is empty or all available are currently displayed, reset queue
+      if (available.length === 0) {
+        resetAvailableQueue();
+        available = availableQueue.filter(m => !currentlyDisplayed.has(m.path));
+      }
+      
+      // If still no available (edge case: more panels than media), allow duplicates
+      if (available.length === 0) {
+        available = mediaFiles.filter(m => m !== panel.currentMedia);
+        if (available.length === 0) {
+          available = mediaFiles;
+        }
+      }
+
+      // Pick the first available (queue is already shuffled)
+      const selected = available[0];
+      
+      // Remove from queue and mark as used
+      const queueIndex = availableQueue.findIndex(m => m.path === selected.path);
+      if (queueIndex > -1) {
+        availableQueue.splice(queueIndex, 1);
+      }
+      
+      return selected;
     }
 
     function formatDate(dateInfo) {
@@ -416,7 +493,37 @@
       return `${monthName} ${dateInfo.year}`;
     }
 
-    function showMedia(panel, media) {
+    // Preload media and return a promise
+    function preloadMedia(media) {
+      return new Promise((resolve) => {
+        if (media.isVideo) {
+          const video = document.createElement('video');
+          video.muted = true;
+          video.loop = true;
+          video.playsInline = true;
+          video.preload = 'auto';
+          video.oncanplaythrough = () => resolve(video);
+          video.onerror = () => resolve(video); // Resolve anyway to not block
+          video.src = media.path;
+        } else {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(img); // Resolve anyway to not block
+          img.src = media.path;
+        }
+      });
+    }
+
+    // Preload next media for a panel
+    async function preloadNextForPanel(panel) {
+      panel.loadingIndicator.classList.add('active');
+      const nextMedia = getRandomMedia(panel);
+      panel.preloadedMedia = nextMedia;
+      panel.preloadedElement = await preloadMedia(nextMedia);
+      panel.loadingIndicator.classList.remove('active');
+    }
+
+    function showMedia(panel, media, preloadedElement = null) {
       const nextIndex = 1 - panel.activeIndex;
       const currentWrapper = panel.wrappers[panel.activeIndex];
       const nextWrapper = panel.wrappers[nextIndex];
@@ -426,9 +533,15 @@
       // Clear next wrapper
       nextWrapper.innerHTML = '';
 
-      // Create media element
+      // Use preloaded element or create new one
       let mediaElement;
-      if (media.isVideo) {
+      if (preloadedElement) {
+        mediaElement = preloadedElement;
+        if (media.isVideo) {
+          mediaElement.autoplay = true;
+          mediaElement.play().catch(() => {}); // Ignore autoplay errors
+        }
+      } else if (media.isVideo) {
         mediaElement = document.createElement('video');
         mediaElement.src = media.path;
         mediaElement.muted = true;
@@ -458,15 +571,31 @@
       // Update panel state
       panel.activeIndex = nextIndex;
       panel.currentMedia = media;
-      panel.usedMedia.add(media.path);
+      currentlyDisplayed.add(media.path);  // Track globally displayed
+      globalUsedMedia.add(media.path);     // Track in current cycle
+      panel.preloadedMedia = null;
+      panel.preloadedElement = null;
     }
 
-    function scheduleNextChange(panel) {
+    async function scheduleNextChange(panel) {
       const delay = getRandomDuration();
       
+      // Start preloading after half the delay
+      const preloadDelay = Math.max(delay / 2, 2000);
+      
       setTimeout(() => {
-        const nextMedia = getRandomMedia(panel);
-        showMedia(panel, nextMedia);
+        preloadNextForPanel(panel);
+      }, preloadDelay);
+      
+      setTimeout(() => {
+        // Use preloaded media if available
+        if (panel.preloadedMedia && panel.preloadedElement) {
+          showMedia(panel, panel.preloadedMedia, panel.preloadedElement);
+        } else {
+          // Fallback: show without preload
+          const nextMedia = getRandomMedia(panel);
+          showMedia(panel, nextMedia);
+        }
         scheduleNextChange(panel);
       }, delay);
     }

@@ -118,7 +118,7 @@ If your photos are stored on a remote server like a Synology NAS, you can mount 
 
 ### Prerequisites
 
-1. **Install SSHFS** on your host machine:
+1. **Install SSHFS** on your slideshow host machine (not the NAS):
    ```bash
    # Ubuntu/Debian
    sudo apt-get install sshfs
@@ -132,15 +132,57 @@ If your photos are stored on a remote server like a Synology NAS, you can mount 
 
 2. **Enable SSH** on your Synology NAS:
    - Control Panel → Terminal & SNMP → Enable SSH service
+   - Set a port (default: 22)
 
-3. **Set up SSH key authentication** (recommended):
+### Set up SSH Key Authentication
+
+SSH keys allow passwordless, secure connections. Set this up on your **slideshow host machine** (not the NAS):
+
+1. **Generate SSH key** (if you don't have one):
    ```bash
-   # Generate SSH key if you don't have one
    ssh-keygen -t rsa -b 4096
+   ```
+   Press Enter to accept defaults (no passphrase needed for automated mounts).
+
+2. **Copy the public key to your NAS**:
    
-   # Copy your public key to the NAS
+   **Option A: Using ssh-copy-id (if available)**
+   ```bash
    ssh-copy-id username@nas-ip-address
    ```
+   
+   **Option B: Manual copy (for Synology or if ssh-copy-id is unavailable)**
+   ```bash
+   # Display your public key
+   cat ~/.ssh/id_rsa.pub
+   ```
+   
+   Copy the entire output (starts with `ssh-rsa`), then on your NAS:
+   ```bash
+   # SSH into your NAS
+   ssh username@nas-ip-address
+   
+   # Create .ssh directory if it doesn't exist
+   mkdir -p ~/.ssh
+   chmod 700 ~/.ssh
+   
+   # Add the public key (paste the key you copied)
+   echo "ssh-rsa AAAA...your-key-here..." >> ~/.ssh/authorized_keys
+   chmod 600 ~/.ssh/authorized_keys
+   ```
+
+3. **Test the connection** (should not ask for password):
+   ```bash
+   ssh username@nas-ip-address
+   ```
+
+### Synology-Specific Notes
+
+On Synology NAS, some commands like `ssh-copy-id` may not be available. Additionally:
+
+- **Home folders**: User home directories are at `/var/services/homes/username/` or `/volume1/homes/username/`
+- **Photo folder**: Usually at `/volume1/photo` or `/volume1/Photos`
+- **Admin access**: You may need to use an admin account or enable user homes in Control Panel → User → Advanced
 
 ### Mount the Remote Directory
 
