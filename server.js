@@ -13,12 +13,64 @@ const SUPPORTED_IMAGES = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
 const SUPPORTED_VIDEOS = ['.mp4', '.webm', '.ogg', '.mov'];
 const SUPPORTED_EXTENSIONS = [...SUPPORTED_IMAGES, ...SUPPORTED_VIDEOS];
 
-// Serve static files
+// Password protection middleware
+const PASSWORD = settings.password || '';
+const activeSessions = new Set();
+
+function generateSessionId() {
+  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+}
+
+function authMiddleware(req, res, next) {
+  if (!PASSWORD) {
+    return next(); // No password configured, allow access
+  }
+  
+  const sessionId = req.headers['x-session-id'];
+  if (sessionId && activeSessions.has(sessionId)) {
+    return next();
+  }
+  
+  res.status(401).json({ error: 'Authentication required' });
+}
+
+app.use(express.json());
+
+// Check if password is required
+app.get('/api/auth/status', (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+  const isAuthenticated = !PASSWORD || (sessionId && activeSessions.has(sessionId));
+  res.json({ 
+    passwordRequired: !!PASSWORD,
+    authenticated: isAuthenticated
+  });
+});
+
+// Login endpoint
+app.post('/api/auth/login', (req, res) => {
+  const { password } = req.body;
+  
+  if (!PASSWORD) {
+    return res.json({ success: true, sessionId: null });
+  }
+  
+  if (password === PASSWORD) {
+    const sessionId = generateSessionId();
+    activeSessions.add(sessionId);
+    return res.json({ success: true, sessionId });
+  }
+  
+  res.status(401).json({ success: false, error: 'Invalid password' });
+});
+
+// Serve static files (public assets always accessible for login page)
 app.use(express.static('public'));
-app.use('/photos', express.static(PHOTOS_PATH));
+
+// Protect photos with auth middleware
+app.use('/photos', authMiddleware, express.static(PHOTOS_PATH));
 
 // Get settings endpoint
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', authMiddleware, (req, res) => {
   res.json({
     gridColumns: settings.gridColumns,
     gridRows: settings.gridRows,
@@ -144,7 +196,7 @@ function getMediaFiles(dir, baseDir = dir) {
 }
 
 // API endpoint to get all media files
-app.get('/api/media', (req, res) => {
+app.get('/api/media', authMiddleware, (req, res) => {
   const files = getMediaFiles(PHOTOS_PATH);
   res.json(files);
 });

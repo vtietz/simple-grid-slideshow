@@ -111,9 +111,91 @@
     #fullscreen-btn:hover {
       background: rgba(0,0,0,0.8);
     }
+
+    /* Login overlay */
+    #login-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.95);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 2000;
+    }
+
+    #login-overlay.hidden {
+      display: none;
+    }
+
+    #login-form {
+      background: #1a1a1a;
+      padding: 40px;
+      border-radius: 10px;
+      text-align: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+
+    #login-form h2 {
+      color: #fff;
+      margin-bottom: 20px;
+      font-weight: 400;
+    }
+
+    #login-form input {
+      width: 250px;
+      padding: 12px 15px;
+      border: 1px solid #333;
+      border-radius: 5px;
+      background: #222;
+      color: #fff;
+      font-size: 16px;
+      margin-bottom: 15px;
+    }
+
+    #login-form input:focus {
+      outline: none;
+      border-color: #666;
+    }
+
+    #login-form button {
+      width: 250px;
+      padding: 12px 15px;
+      border: none;
+      border-radius: 5px;
+      background: #3a7bd5;
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #login-form button:hover {
+      background: #2a6bc5;
+    }
+
+    #login-error {
+      color: #e74c3c;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+
+    #login-error.hidden {
+      display: none;
+    }
   </style>
 </head>
 <body>
+  <div id="login-overlay" class="hidden">
+    <div id="login-form">
+      <h2>🖼️ Photo Slideshow</h2>
+      <input type="password" id="password-input" placeholder="Enter password" autofocus>
+      <button onclick="submitLogin()">Login</button>
+      <div id="login-error" class="hidden">Invalid password</div>
+    </div>
+  </div>
   <div id="loading">Loading slideshow...</div>
   <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
   <div id="grid-container"></div>
@@ -146,17 +228,92 @@
       ]
     };
 
+    let sessionId = localStorage.getItem('slideshow_session');
+
+    // Add session header to all fetch requests
+    async function authFetch(url, options = {}) {
+      const headers = { ...options.headers };
+      if (sessionId) {
+        headers['X-Session-Id'] = sessionId;
+      }
+      return fetch(url, { ...options, headers });
+    }
+
+    async function checkAuth() {
+      const res = await authFetch('/api/auth/status');
+      const status = await res.json();
+      
+      if (status.passwordRequired && !status.authenticated) {
+        document.getElementById('login-overlay').classList.remove('hidden');
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('password-input').focus();
+        return false;
+      }
+      return true;
+    }
+
+    async function submitLogin() {
+      const password = document.getElementById('password-input').value;
+      const errorEl = document.getElementById('login-error');
+      
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        
+        const result = await res.json();
+        
+        if (result.success) {
+          sessionId = result.sessionId;
+          if (sessionId) {
+            localStorage.setItem('slideshow_session', sessionId);
+          }
+          document.getElementById('login-overlay').classList.add('hidden');
+          document.getElementById('loading').classList.remove('hidden');
+          init();
+        } else {
+          errorEl.classList.remove('hidden');
+          document.getElementById('password-input').value = '';
+          document.getElementById('password-input').focus();
+        }
+      } catch (err) {
+        errorEl.classList.remove('hidden');
+      }
+    }
+
+    // Handle Enter key on password input
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('password-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          submitLogin();
+        }
+      });
+    });
+
     async function init() {
       try {
+        // Check authentication first
+        if (!(await checkAuth())) {
+          return;
+        }
+
         // Load settings
-        const settingsRes = await fetch('/api/settings');
+        const settingsRes = await authFetch('/api/settings');
+        if (settingsRes.status === 401) {
+          sessionId = null;
+          localStorage.removeItem('slideshow_session');
+          checkAuth();
+          return;
+        }
         settings = await settingsRes.json();
 
         // Set CSS transition duration
         document.documentElement.style.setProperty('--transition-duration', `${settings.transitionDuration}s`);
 
         // Load media files
-        const mediaRes = await fetch('/api/media');
+        const mediaRes = await authFetch('/api/media');
         mediaFiles = await mediaRes.json();
 
         if (mediaFiles.length === 0) {

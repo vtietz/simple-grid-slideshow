@@ -51,7 +51,8 @@ Edit `settings.json` to customize:
   "maxDuration": 15,
   "transitionDuration": 1.5,
   "port": 3003,
-  "language": "de"
+  "language": "de",
+  "password": ""
 }
 ```
 
@@ -65,6 +66,22 @@ Edit `settings.json` to customize:
 | `transitionDuration` | Crossfade animation duration (seconds) | `1.5` |
 | `port` | Server port | `3000` |
 | `language` | Month names language: `en`, `de`, `es`, `fr`, `it` | `en` |
+| `password` | Optional password protection (empty = disabled) | `""` |
+
+## Password Protection
+
+To enable password protection, set a password in `settings.json`:
+
+```json
+{
+  "password": "your-secret-password"
+}
+```
+
+When enabled:
+- A login screen will appear before the slideshow
+- Session is stored in browser localStorage
+- To disable, set `"password": ""` or remove the setting
 
 ## Date Extraction
 
