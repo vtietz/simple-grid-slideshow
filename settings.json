@@ -1,0 +1,10 @@
+{
+  "photosPath": "./photos",
+  "gridColumns": 3,
+  "gridRows": 3,
+  "minDuration": 10,
+  "maxDuration": 25,
+  "transitionDuration": 1.5,
+  "port": 3003,
+  "language": "de"
+}

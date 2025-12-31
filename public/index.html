@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Photo Slideshow</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    #grid-container {
+      display: grid;
+      width: 100vw;
+      height: 100vh;
+      gap: 2px;
+      background: #111;
+    }
+
+    .panel {
+      position: relative;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .panel .media-wrapper {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      transition: opacity var(--transition-duration, 1.5s) ease-in-out;
+    }
+
+    .panel .media-wrapper.active {
+      opacity: 1;
+    }
+
+    .panel .media-wrapper img,
+    .panel .media-wrapper video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .panel .date-overlay {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      padding: 5px 12px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      opacity: 0;
+      transition: opacity var(--transition-duration, 1.5s) ease-in-out;
+      z-index: 10;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    }
+
+    .panel .date-overlay.active {
+      opacity: 1;
+    }
+
+    #loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      font-size: 24px;
+      z-index: 100;
+    }
+
+    #loading.hidden {
+      display: none;
+    }
+
+    /* Fullscreen button */
+    #fullscreen-btn {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(0,0,0,0.5);
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      cursor: pointer;
+      border-radius: 5px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    body:hover #fullscreen-btn {
+      opacity: 1;
+    }
+
+    #fullscreen-btn:hover {
+      background: rgba(0,0,0,0.8);
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">Loading slideshow...</div>
+  <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+  <div id="grid-container"></div>
+
+  <script>
+    let settings = {};
+    let mediaFiles = [];
+    let panels = [];
+    
+    const MONTH_NAMES = {
+      en: [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ],
+      de: [
+        'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+        'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
+      ],
+      es: [
+        'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+      ],
+      fr: [
+        'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+        'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+      ],
+      it: [
+        'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
+        'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
+      ]
+    };
+
+    async function init() {
+      try {
+        // Load settings
+        const settingsRes = await fetch('/api/settings');
+        settings = await settingsRes.json();
+
+        // Set CSS transition duration
+        document.documentElement.style.setProperty('--transition-duration', `${settings.transitionDuration}s`);
+
+        // Load media files
+        const mediaRes = await fetch('/api/media');
+        mediaFiles = await mediaRes.json();
+
+        if (mediaFiles.length === 0) {
+          document.getElementById('loading').textContent = 'No photos found in the photos folder';
+          return;
+        }
+
+        // Setup grid
+        setupGrid();
+
+        // Hide loading
+        document.getElementById('loading').classList.add('hidden');
+
+      } catch (err) {
+        console.error('Error initializing:', err);
+        document.getElementById('loading').textContent = 'Error loading slideshow';
+      }
+    }
+
+    function setupGrid() {
+      const container = document.getElementById('grid-container');
+      container.style.gridTemplateColumns = `repeat(${settings.gridColumns}, 1fr)`;
+      container.style.gridTemplateRows = `repeat(${settings.gridRows}, 1fr)`;
+
+      const totalPanels = settings.gridColumns * settings.gridRows;
+
+      // Shuffle media files for initial distribution
+      const shuffled = [...mediaFiles].sort(() => Math.random() - 0.5);
+
+      for (let i = 0; i < totalPanels; i++) {
+        const panel = createPanel(i);
+        container.appendChild(panel.element);
+        panels.push(panel);
+
+        // Set initial media (use modulo to handle case where we have fewer files than panels)
+        const initialMedia = shuffled[i % shuffled.length];
+        showMedia(panel, initialMedia);
+
+        // Start random timer for this panel
+        scheduleNextChange(panel);
+      }
+    }
+
+    function createPanel(index) {
+      const element = document.createElement('div');
+      element.className = 'panel';
+      element.dataset.index = index;
+
+      // Create two media wrappers for crossfade effect
+      const wrapper1 = document.createElement('div');
+      wrapper1.className = 'media-wrapper';
+      
+      const wrapper2 = document.createElement('div');
+      wrapper2.className = 'media-wrapper';
+
+      // Create date overlays
+      const dateOverlay1 = document.createElement('div');
+      dateOverlay1.className = 'date-overlay';
+      
+      const dateOverlay2 = document.createElement('div');
+      dateOverlay2.className = 'date-overlay';
+
+      element.appendChild(wrapper1);
+      element.appendChild(wrapper2);
+      element.appendChild(dateOverlay1);
+      element.appendChild(dateOverlay2);
+
+      return {
+        element,
+        wrappers: [wrapper1, wrapper2],
+        dateOverlays: [dateOverlay1, dateOverlay2],
+        activeIndex: 0,
+        currentMedia: null,
+        usedMedia: new Set()
+      };
+    }
+
+    function getRandomMedia(panel) {
+      // If we've used all media, reset the used set
+      if (panel.usedMedia.size >= mediaFiles.length) {
+        panel.usedMedia.clear();
+      }
+
+      // Get unused media
+      const unused = mediaFiles.filter(m => !panel.usedMedia.has(m.path) && m !== panel.currentMedia);
+      
+      if (unused.length === 0) {
+        // Fallback: just pick random
+        return mediaFiles[Math.floor(Math.random() * mediaFiles.length)];
+      }
+
+      return unused[Math.floor(Math.random() * unused.length)];
+    }
+
+    function formatDate(dateInfo) {
+      if (!dateInfo) return '';
+      const lang = settings.language || 'en';
+      const months = MONTH_NAMES[lang] || MONTH_NAMES.en;
+      const monthName = months[dateInfo.month - 1] || '';
+      return `${monthName} ${dateInfo.year}`;
+    }
+
+    function showMedia(panel, media) {
+      const nextIndex = 1 - panel.activeIndex;
+      const currentWrapper = panel.wrappers[panel.activeIndex];
+      const nextWrapper = panel.wrappers[nextIndex];
+      const currentDateOverlay = panel.dateOverlays[panel.activeIndex];
+      const nextDateOverlay = panel.dateOverlays[nextIndex];
+
+      // Clear next wrapper
+      nextWrapper.innerHTML = '';
+
+      // Create media element
+      let mediaElement;
+      if (media.isVideo) {
+        mediaElement = document.createElement('video');
+        mediaElement.src = media.path;
+        mediaElement.muted = true;
+        mediaElement.loop = true;
+        mediaElement.autoplay = true;
+        mediaElement.playsInline = true;
+      } else {
+        mediaElement = document.createElement('img');
+        mediaElement.src = media.path;
+        mediaElement.loading = 'eager';
+      }
+
+      nextWrapper.appendChild(mediaElement);
+
+      // Set date overlay
+      const dateText = formatDate(media.date);
+      nextDateOverlay.textContent = dateText;
+
+      // Crossfade
+      currentWrapper.classList.remove('active');
+      nextWrapper.classList.add('active');
+      currentDateOverlay.classList.remove('active');
+      if (dateText) {
+        nextDateOverlay.classList.add('active');
+      }
+
+      // Update panel state
+      panel.activeIndex = nextIndex;
+      panel.currentMedia = media;
+      panel.usedMedia.add(media.path);
+    }
+
+    function scheduleNextChange(panel) {
+      const delay = getRandomDuration();
+      
+      setTimeout(() => {
+        const nextMedia = getRandomMedia(panel);
+        showMedia(panel, nextMedia);
+        scheduleNextChange(panel);
+      }, delay);
+    }
+
+    function getRandomDuration() {
+      const min = settings.minDuration * 1000;
+      const max = settings.maxDuration * 1000;
+      return Math.random() * (max - min) + min;
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    // Handle keyboard
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      }
+      if (e.key === 'Escape' && document.fullscreenElement) {
+        document.exitFullscreen();
+      }
+    });
+
+    // Initialize on load
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>

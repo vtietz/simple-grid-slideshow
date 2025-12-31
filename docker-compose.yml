@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  slideshow:
+    build: .
+    container_name: photo-slideshow
+    ports:
+      - "3003:3003"
+    volumes:
+      - ./photos:/app/photos:ro
+      - ./settings.json:/app/settings.json:ro
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production

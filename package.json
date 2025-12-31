@@ -1,0 +1,14 @@
+{
+  "name": "photo-slideshow",
+  "version": "1.0.0",
+  "description": "A grid-based photo/video slideshow with random transitions",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "exif-parser": "^0.1.12",
+    "fluent-ffmpeg": "^2.1.2"
+  }
+}
